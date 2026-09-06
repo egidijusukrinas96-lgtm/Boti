@@ -3,6 +3,7 @@ import { BiometricAuth } from '@aparajita/capacitor-biometric-auth';
 
 const STORAGE_KEY = 'adrenaline.wallet.v2';
 const KEY_PREFIX = 'adrenaline_';
+const LEGACY_PREFIX = 'capacitor-storage_';
 const AUTH_TIMEOUT_MS = 30000;
 const STORAGE_TIMEOUT_MS = 10000;
 let nativeStored = false;
@@ -14,44 +15,78 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
-async function prepareStorage() {
-  await SecureStorage.setKeyPrefix(KEY_PREFIX);
+async function prepareStorage(prefix = KEY_PREFIX) {
+  await SecureStorage.setKeyPrefix(prefix);
+}
+
+function normalizeStoredWallet(value) {
+  if (!value) return null;
+  if (typeof value === 'object' && value.seed) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object' && parsed.seed) return parsed;
+    } catch {}
+  }
+  return null;
+}
+
+async function readStoredWallet() {
+  await prepareStorage(KEY_PREFIX);
+  let value = await withTimeout(
+    SecureStorage.get(STORAGE_KEY),
+    STORAGE_TIMEOUT_MS,
+    'Secure wallet storage did not respond.'
+  );
+  let wallet = normalizeStoredWallet(value);
+  if (wallet) return wallet;
+
+  await prepareStorage(LEGACY_PREFIX);
+  value = await withTimeout(
+    SecureStorage.get(STORAGE_KEY),
+    STORAGE_TIMEOUT_MS,
+    'Legacy wallet storage did not respond.'
+  );
+  wallet = normalizeStoredWallet(value);
+  if (!wallet) return null;
+
+  await prepareStorage(KEY_PREFIX);
+  await withTimeout(
+    SecureStorage.set(STORAGE_KEY, wallet, false, false),
+    STORAGE_TIMEOUT_MS,
+    'Could not migrate the existing wallet to the current secure storage key.'
+  );
+  return wallet;
 }
 
 export async function initializeSecureStorage() {
   try {
-    await prepareStorage();
-    const stored = await withTimeout(
-      SecureStorage.get(STORAGE_KEY),
-      STORAGE_TIMEOUT_MS,
-      'Secure storage did not respond. Restart the app and try again.'
-    );
+    const stored = await readStoredWallet();
     nativeStored = stored !== null;
+    await prepareStorage(KEY_PREFIX);
     return nativeStored;
   } catch {
     nativeStored = false;
+    await prepareStorage(KEY_PREFIX).catch(() => {});
     return false;
   }
 }
 
 export async function hasStoredWallet() {
   try {
-    await prepareStorage();
-    const stored = await withTimeout(
-      SecureStorage.get(STORAGE_KEY),
-      STORAGE_TIMEOUT_MS,
-      'Secure storage did not respond.'
-    );
+    const stored = await readStoredWallet();
     nativeStored = stored !== null;
+    await prepareStorage(KEY_PREFIX);
   } catch {
     nativeStored = false;
+    await prepareStorage(KEY_PREFIX).catch(() => {});
   }
   return nativeStored;
 }
 
 export async function saveWallet(wallet) {
   if (!wallet?.seed) throw new Error('Wallet seed is unavailable.');
-  await prepareStorage();
+  await prepareStorage(KEY_PREFIX);
   await withTimeout(
     SecureStorage.set(STORAGE_KEY, {
       version: 2,
@@ -67,7 +102,7 @@ export async function saveWallet(wallet) {
 }
 
 export async function unlockWallet() {
-  await prepareStorage();
+  await prepareStorage(KEY_PREFIX);
 
   let check;
   try {
@@ -102,29 +137,29 @@ export async function unlockWallet() {
 
   let stored;
   try {
-    stored = await withTimeout(
-      SecureStorage.get(STORAGE_KEY),
-      STORAGE_TIMEOUT_MS,
-      'Authentication succeeded, but secure wallet storage did not respond.'
-    );
+    stored = await readStoredWallet();
   } catch (error) {
     throw new Error(error?.message || 'Could not read the secure wallet after authentication.');
   }
 
-  if (!stored || typeof stored !== 'object' || !stored.seed) {
-    throw new Error('Authentication succeeded, but no valid wallet was found on this device.');
+  if (!stored) {
+    throw new Error('Authentication succeeded, but no valid wallet data exists in secure storage. If this app was uninstalled/reinstalled or app data was cleared, restore the wallet with your recovery phrase.');
   }
 
   nativeStored = true;
+  await prepareStorage(KEY_PREFIX);
   return stored;
 }
 
 export async function deleteStoredWallet() {
-  await prepareStorage();
+  await prepareStorage(KEY_PREFIX);
   await withTimeout(
     SecureStorage.remove(STORAGE_KEY),
     STORAGE_TIMEOUT_MS,
     'Could not delete the secure wallet.'
   );
+  await prepareStorage(LEGACY_PREFIX).catch(() => {});
+  await withTimeout(SecureStorage.remove(STORAGE_KEY), STORAGE_TIMEOUT_MS, 'Could not delete legacy wallet data.').catch(() => {});
+  await prepareStorage(KEY_PREFIX);
   nativeStored = false;
 }
