@@ -59,6 +59,6 @@ export async function unlockWallet() {
 
 export async function deleteStoredWallet() {
   await SecureStorage.setKeyPrefix('adrenaline_');
-  await SecureStorage.set(STORAGE_KEY, null);
+  await SecureStorage.remove(STORAGE_KEY);
   nativeStored = false;
 }
