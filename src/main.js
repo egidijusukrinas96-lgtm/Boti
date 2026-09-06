@@ -6,6 +6,13 @@ import { hasStoredWallet, saveWallet, unlockWallet, deleteStoredWallet, initiali
 
 const TESTNET = 'wss://s.altnet.rippletest.net:51233';
 const FAUCET = 'https://faucet.altnet.rippletest.net/accounts';
+const PORTFOLIO = [
+  { symbol: 'BTC', network: 'Bitcoin Testnet', mode: 'PLANNED' },
+  { symbol: 'ETH', network: 'Ethereum Sepolia', mode: 'PLANNED' },
+  { symbol: 'USDT', network: 'Ethereum Sepolia', mode: 'PLANNED' },
+  { symbol: 'XRP', network: 'XRPL Testnet', mode: 'LIVE TESTNET' }
+];
+
 let wallet = null;
 let client = null;
 let recoveryPhrase = '';
@@ -21,6 +28,14 @@ function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 }
 
+function portfolioMarkup() {
+  return PORTFOLIO.map(asset => `
+    <div class="asset-row">
+      <div><strong>${asset.symbol}</strong><span>${asset.network}</span></div>
+      <div class="asset-status">${asset.mode}</div>
+    </div>`).join('');
+}
+
 async function render() {
   const stored = await hasStoredWallet();
   app.innerHTML = `
@@ -31,7 +46,7 @@ async function render() {
       </header>
 
       <section class="card hero">
-        <div class="label">XRPL TESTNET · ANDROID SECURE STORAGE</div>
+        <div class="label">UNIFIED PORTFOLIO · TESTNET MODE</div>
         <div class="balance">${balance} <small>XRP</small></div>
         <div class="sub">${wallet && !locked ? short(wallet.address) : stored ? 'Wallet locked' : 'No wallet configured'}</div>
         ${wallet && !locked ? '<div class="unlock-state">🔓 WALLET UNLOCKED</div>' : '<div class="lock-state">🔒 WALLET LOCKED</div>'}
@@ -41,16 +56,22 @@ async function render() {
         ${wallet && !locked ? '<button id="lock" class="ghost">LOCK WALLET</button>' : ''}
       </section>
 
+      <section class="card portfolio">
+        <div class="label">ASSET PORTFOLIO</div>
+        ${portfolioMarkup()}
+        <p class="hint">XRP is connected to XRPL Testnet now. BTC, ETH and ERC-20 USDT are staged as separate testnet integrations and will not use real funds yet.</p>
+      </section>
+
       ${wallet && !locked ? `
       <section class="card send">
         <div class="label">SEND XRP · TESTNET</div>
         <input id="destination" placeholder="Destination r-address" autocomplete="off"/>
         <input id="amount" inputmode="decimal" placeholder="Amount XRP"/>
         <button id="send">🔐 BIOMETRIC CONFIRM · SIGN & SEND</button>
-        <p class="hint">A fresh biometric/device authentication is required immediately before the wallet secret is used to sign.</p>
+        <p class="hint">The exact transaction is previewed before fresh biometric/device authentication and local signing.</p>
       </section>
       <section class="card wallet">
-        <div class="label">WALLET</div>
+        <div class="label">XRPL WALLET</div>
         <div class="address">${escapeHtml(wallet.address)}</div>
         <button id="fund" class="ghost">REQUEST TESTNET XRP</button>
         <button id="refresh" class="ghost">REFRESH BALANCE</button>
@@ -63,13 +84,13 @@ async function render() {
       </section>` : `
       <section class="card security">
         <div class="label">SECURITY</div>
-        <p>Wallet secrets are stored with the native Android secure-storage plugin, which uses Android Keystore-backed AES-GCM encryption. Unlock requires biometric/device authentication.</p>
+        <p>Wallet secrets are stored with the native Android secure-storage plugin. Unlock requires biometric/device authentication.</p>
         <p class="warning">Never share your recovery phrase. Anyone with it can control the wallet.</p>
       </section>`}
 
       <section class="card protocol"><div class="label">GAME SAFETY</div><h2>USER CONTROLLED</h2><p>Victory/Death is a game layer. It never confiscates, burns or automatically transfers real wallet funds.</p></section>
       <p id="message" class="message">${escapeHtml(message)}</p>
-      <footer>XRPL TESTNET · ANDROID KEYSTORE · BIOMETRIC SIGNING</footer>
+      <footer>TESTNET-FIRST · LOCAL SIGNING · USER CONTROLLED FUNDS</footer>
     </main>`;
 
   document.querySelector('#create')?.addEventListener('click', createWallet);
@@ -158,7 +179,7 @@ function lockWallet() {
   setMessage('Wallet locked. Secret material was removed from active app state.', 'LOCKED');
 }
 
-async function showPhrase(initial = false) {
+async function showPhrase() {
   if (!wallet || locked || !recoveryPhrase) return;
   try {
     const stored = await unlockWallet();
@@ -208,8 +229,6 @@ async function sendXrp() {
     const ok = confirm(`TRANSACTION PREVIEW\n\nTo: ${destination}\nAmount: ${amount} XRP\nNetwork fee: ${fee} XRP\nSequence: ${prepared.Sequence}\nNetwork: XRPL TESTNET\n\nContinue to biometric authentication and local signing?`);
     if (!ok) return setMessage('Transaction cancelled.', 'CANCELLED');
 
-    // The stored seed is decrypted only after the user explicitly confirms the exact transaction.
-    // The signing wallet exists only for this operation and is discarded immediately afterwards.
     const stored = await unlockWallet();
     const signingWallet = Wallet.fromSeed(stored.seed);
     if (signingWallet.address !== wallet.address) throw new Error('Wallet integrity check failed.');
