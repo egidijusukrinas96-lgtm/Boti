@@ -1,5 +1,5 @@
 import './style.css';
-import { Client, Wallet, dropsToXrp, xrpToDrops } from 'xrpl';
+import { Client, Wallet, dropsToXrp, xrpToDrops, isValidClassicAddress } from 'xrpl';
 import { generateMnemonic, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import { hasStoredWallet, saveWallet, unlockWallet, deleteStoredWallet, initializeSecureStorage } from './secure-storage.js';
@@ -46,7 +46,8 @@ async function render() {
         <div class="label">SEND XRP · TESTNET</div>
         <input id="destination" placeholder="Destination r-address" autocomplete="off"/>
         <input id="amount" inputmode="decimal" placeholder="Amount XRP"/>
-        <button id="send">PREVIEW & SIGN TRANSACTION</button>
+        <button id="send">🔐 BIOMETRIC CONFIRM · SIGN & SEND</button>
+        <p class="hint">A fresh biometric/device authentication is required immediately before the wallet secret is used to sign.</p>
       </section>
       <section class="card wallet">
         <div class="label">WALLET</div>
@@ -68,7 +69,7 @@ async function render() {
 
       <section class="card protocol"><div class="label">GAME SAFETY</div><h2>USER CONTROLLED</h2><p>Victory/Death is a game layer. It never confiscates, burns or automatically transfers real wallet funds.</p></section>
       <p id="message" class="message">${escapeHtml(message)}</p>
-      <footer>XRPL TESTNET · ANDROID KEYSTORE · BIOMETRIC UNLOCK</footer>
+      <footer>XRPL TESTNET · ANDROID KEYSTORE · BIOMETRIC SIGNING</footer>
     </main>`;
 
   document.querySelector('#create')?.addEventListener('click', createWallet);
@@ -85,7 +86,7 @@ async function render() {
 function setMessage(text, nextStatus = status) {
   message = text;
   status = nextStatus;
-  render();
+  void render();
 }
 
 async function connect() {
@@ -195,15 +196,26 @@ async function sendXrp() {
   if (!wallet || locked) return setMessage('Unlock the wallet first.', 'LOCKED');
   const destination = document.querySelector('#destination')?.value.trim();
   const amount = document.querySelector('#amount')?.value.trim();
-  if (!destination || !amount || Number(amount) <= 0) return setMessage('Enter a destination and positive XRP amount.', 'VALIDATION');
-  if (!/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(destination)) return setMessage('Destination must be a valid XRPL r-address.', 'VALIDATION');
+  const numericAmount = Number(amount);
+  if (!destination || !amount || !Number.isFinite(numericAmount) || numericAmount <= 0) return setMessage('Enter a valid positive XRP amount.', 'VALIDATION');
+  if (!isValidClassicAddress(destination)) return setMessage('Destination is not a valid XRPL classic address.', 'VALIDATION');
+  if (destination === wallet.address) return setMessage('Destination must be different from your own address.', 'VALIDATION');
+
   try {
     await connect();
     const prepared = await client.autofill({ TransactionType: 'Payment', Account: wallet.address, Destination: destination, Amount: xrpToDrops(amount) });
     const fee = dropsToXrp(prepared.Fee || '0');
-    const ok = confirm(`TRANSACTION PREVIEW\n\nTo: ${short(destination)}\nAmount: ${amount} XRP\nNetwork fee: ${fee} XRP\nSequence: ${prepared.Sequence}\n\nConfirm local signing and Testnet submission?`);
+    const ok = confirm(`TRANSACTION PREVIEW\n\nTo: ${destination}\nAmount: ${amount} XRP\nNetwork fee: ${fee} XRP\nSequence: ${prepared.Sequence}\nNetwork: XRPL TESTNET\n\nContinue to biometric authentication and local signing?`);
     if (!ok) return setMessage('Transaction cancelled.', 'CANCELLED');
-    const signed = wallet.sign(prepared);
+
+    // The stored seed is decrypted only after the user explicitly confirms the exact transaction.
+    // The signing wallet exists only for this operation and is discarded immediately afterwards.
+    const stored = await unlockWallet();
+    const signingWallet = Wallet.fromSeed(stored.seed);
+    if (signingWallet.address !== wallet.address) throw new Error('Wallet integrity check failed.');
+    const signed = signingWallet.sign(prepared);
+    signingWallet.seed = '';
+
     const result = await client.submitAndWait(signed.tx_blob);
     balance = await getBalance();
     setMessage(`Validated ledger ${result.result.ledger_index} · TX ${signed.hash}`, 'CONFIRMED');
