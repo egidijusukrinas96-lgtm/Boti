@@ -1,6 +1,6 @@
 {
   "name": "adrenaline-wallet",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
     "@scure/base": "^1.2.6",
     "@noble/hashes": "^2.0.1",
     "ethers": "^6.15.0",
+    "qrcode": "^1.5.4",
     "xrpl": "^4.6.0"
   },
   "devDependencies": {
