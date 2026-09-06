@@ -2,7 +2,7 @@ import './style.css';
 import { Client, Wallet, dropsToXrp, xrpToDrops } from 'xrpl';
 import { generateMnemonic, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
-import { hasStoredWallet, saveWallet, unlockWallet, deleteStoredWallet } from './secure-storage.js';
+import { hasStoredWallet, saveWallet, unlockWallet, deleteStoredWallet, initializeSecureStorage } from './secure-storage.js';
 
 const TESTNET = 'wss://s.altnet.rippletest.net:51233';
 const FAUCET = 'https://faucet.altnet.rippletest.net/accounts';
@@ -21,8 +21,8 @@ function escapeHtml(value = '') {
   return String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 }
 
-function render() {
-  const stored = hasStoredWallet();
+async function render() {
+  const stored = await hasStoredWallet();
   app.innerHTML = `
     <main class="shell">
       <header class="topbar">
@@ -31,11 +31,11 @@ function render() {
       </header>
 
       <section class="card hero">
-        <div class="label">XRPL TESTNET · WALLET SECURITY</div>
+        <div class="label">XRPL TESTNET · ANDROID SECURE STORAGE</div>
         <div class="balance">${balance} <small>XRP</small></div>
         <div class="sub">${wallet && !locked ? short(wallet.address) : stored ? 'Wallet locked' : 'No wallet configured'}</div>
         ${wallet && !locked ? '<div class="unlock-state">🔓 WALLET UNLOCKED</div>' : '<div class="lock-state">🔒 WALLET LOCKED</div>'}
-        ${stored && (!wallet || locked) ? '<button id="unlock">UNLOCK WALLET</button>' : ''}
+        ${stored && (!wallet || locked) ? '<button id="unlock">🔐 UNLOCK WITH BIOMETRIC</button>' : ''}
         ${!stored ? '<button id="create">CREATE NEW WALLET</button>' : ''}
         ${!wallet || locked ? '<button id="import" class="ghost">IMPORT RECOVERY PHRASE</button>' : ''}
         ${wallet && !locked ? '<button id="lock" class="ghost">LOCK WALLET</button>' : ''}
@@ -56,18 +56,19 @@ function render() {
       </section>
       <section class="card security">
         <div class="label">RECOVERY</div>
-        <button id="showPhrase" class="ghost">SHOW RECOVERY PHRASE</button>
+        <p>Recovery phrase is kept only in the active app session and is never stored in secure storage.</p>
+        ${recoveryPhrase ? '<button id="showPhrase" class="ghost">SHOW RECOVERY PHRASE</button>' : '<p class="warning">Your recovery phrase is not available in this session. Use your original backup phrase if you need to restore the wallet.</p>'}
         <button id="delete" class="danger">DELETE DEVICE WALLET</button>
       </section>` : `
       <section class="card security">
         <div class="label">SECURITY</div>
-        <p>Your recovery phrase is the master key. Anyone who has it can control the wallet.</p>
-        <p class="warning">Never send it to support, websites, chat, screenshots or cloud notes.</p>
+        <p>Wallet secrets are stored with the native Android secure-storage plugin, which uses Android Keystore-backed AES-GCM encryption. Unlock requires biometric/device authentication.</p>
+        <p class="warning">Never share your recovery phrase. Anyone with it can control the wallet.</p>
       </section>`}
 
       <section class="card protocol"><div class="label">GAME SAFETY</div><h2>USER CONTROLLED</h2><p>Victory/Death is a game layer. It never confiscates, burns or automatically transfers real wallet funds.</p></section>
       <p id="message" class="message">${escapeHtml(message)}</p>
-      <footer>XRPL TESTNET · ENCRYPTED WALLET · ANDROID</footer>
+      <footer>XRPL TESTNET · ANDROID KEYSTORE · BIOMETRIC UNLOCK</footer>
     </main>`;
 
   document.querySelector('#create')?.addEventListener('click', createWallet);
@@ -110,51 +111,41 @@ async function createWallet() {
   try {
     const phrase = generateMnemonic(wordlist, 128);
     const nextWallet = makeWalletFromPhrase(phrase);
-    const pin = prompt('Create a 6–12 digit wallet PIN. Do not reuse a sensitive account password.');
-    if (!pin) return;
-    const confirmPin = prompt('Repeat your wallet PIN.');
-    if (pin !== confirmPin) throw new Error('PINs do not match.');
-    recoveryPhrase = phrase;
-    await saveWallet(nextWallet, pin);
+    await saveWallet(nextWallet);
     wallet = nextWallet;
+    recoveryPhrase = phrase;
     locked = false;
     balance = await getBalance();
     status = 'WALLET CREATED';
-    message = 'IMPORTANT: write down your recovery phrase. It is the only backup for this wallet.';
-    render();
+    message = 'Back up the recovery phrase now. It is the only portable backup of this wallet.';
+    await render();
     setTimeout(() => showPhrase(true), 50);
   } catch (e) { setMessage(e.message, 'ERROR'); }
 }
 
 async function importWallet() {
   try {
-    const phrase = prompt('Enter your 12-word BIP39 recovery phrase. It stays on this device.');
+    const phrase = prompt('Enter your 12-word BIP39 recovery phrase. It stays on this device and is not uploaded.');
     if (!phrase) return;
     const normalized = phrase.trim().toLowerCase().replace(/\s+/g, ' ');
     const nextWallet = makeWalletFromPhrase(normalized);
-    const pin = prompt('Create a new 6–12 digit PIN for this device.');
-    if (!pin) return;
-    const confirmPin = prompt('Repeat your wallet PIN.');
-    if (pin !== confirmPin) throw new Error('PINs do not match.');
-    recoveryPhrase = normalized;
-    await saveWallet(nextWallet, pin);
+    await saveWallet(nextWallet);
     wallet = nextWallet;
+    recoveryPhrase = normalized;
     locked = false;
     balance = await getBalance();
-    setMessage('Wallet imported. Recovery phrase was not uploaded.', 'WALLET READY');
+    setMessage('Wallet imported into Android secure storage. Recovery phrase was not uploaded.', 'WALLET READY');
   } catch (e) { setMessage(e.message, 'IMPORT ERROR'); }
 }
 
 async function unlock() {
   try {
-    const pin = prompt('Enter wallet PIN.');
-    if (!pin) return;
-    const stored = await unlockWallet(pin);
+    const stored = await unlockWallet();
     wallet = Wallet.fromSeed(stored.seed);
     locked = false;
     recoveryPhrase = '';
     balance = await getBalance();
-    setMessage('Wallet unlocked locally.', 'WALLET READY');
+    setMessage('Wallet unlocked with biometric/device authentication.', 'WALLET READY');
   } catch (e) { setMessage(e.message, 'UNLOCK ERROR'); }
 }
 
@@ -163,27 +154,26 @@ function lockWallet() {
   recoveryPhrase = '';
   balance = '0';
   locked = true;
-  setMessage('Wallet locked. Secret material was removed from the active app state.', 'LOCKED');
+  setMessage('Wallet locked. Secret material was removed from active app state.', 'LOCKED');
 }
 
 async function showPhrase(initial = false) {
-  if (!wallet || locked) return;
+  if (!wallet || locked || !recoveryPhrase) return;
   try {
-    const pin = prompt(initial ? 'Confirm your wallet PIN to reveal the recovery phrase.' : 'Enter wallet PIN before revealing the recovery phrase.');
-    if (!pin) return;
-    const stored = await unlockWallet(pin);
+    const stored = await unlockWallet();
     const recovered = Wallet.fromSeed(stored.seed);
-    if (!recoveryPhrase) throw new Error('Recovery phrase is not available in this session. Use your original backup phrase.');
     if (recovered.address !== wallet.address) throw new Error('Wallet integrity check failed.');
     alert(`RECOVERY PHRASE — KEEP SECRET\n\n${recoveryPhrase}\n\nNever share or screenshot this phrase.`);
   } catch (e) { setMessage(e.message, 'SECURITY ERROR'); }
 }
 
-function deleteWallet() {
+async function deleteWallet() {
   if (!confirm('Delete the encrypted wallet from this device? You can recover it only with your recovery phrase.')) return;
-  deleteStoredWallet();
-  lockWallet();
-  setMessage('Encrypted device wallet deleted. Recovery phrase can restore it.', 'DELETED');
+  try {
+    await deleteStoredWallet();
+    lockWallet();
+    setMessage('Encrypted device wallet deleted. Recovery phrase can restore it.', 'DELETED');
+  } catch (e) { setMessage(e.message, 'DELETE ERROR'); }
 }
 
 async function refreshBalance() {
@@ -220,4 +210,9 @@ async function sendXrp() {
   } catch (e) { setMessage(e.message, 'TX ERROR'); }
 }
 
-render();
+async function boot() {
+  await initializeSecureStorage();
+  await render();
+}
+
+boot();
