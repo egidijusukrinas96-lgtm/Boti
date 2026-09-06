@@ -10,8 +10,6 @@ jobs:
   build-apk:
     name: Build APK
     runs-on: ubuntu-latest
-    env:
-      NODE_ENV: production
 
     steps:
       - name: Checkout repository
@@ -21,6 +19,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
       - name: Set up Java 21
         uses: actions/setup-java@v4
@@ -36,9 +35,9 @@ jobs:
       - name: Install dependencies
         run: |
           if [ -f package-lock.json ]; then
-            npm ci
+            npm ci --include=dev
           else
-            npm install
+            npm install --include=dev
           fi
 
       - name: Build web assets
