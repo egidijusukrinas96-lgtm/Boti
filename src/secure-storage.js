@@ -9,18 +9,21 @@ export async function hasStoredWallet() {
 }
 
 export async function saveWallet(wallet) {
+  // Pagauname sėklą iš bet kurio galimo XRPL bibliotekos formato
   let seed = wallet.seed;
-  if (!seed && typeof wallet.secret === 'function') {
-    seed = wallet.secret();
-  }
+  if (!seed && typeof wallet.secret === 'function') seed = wallet.secret();
+  if (!seed && wallet.secret) seed = wallet.secret;
+  if (!seed && wallet._secret) seed = wallet._secret;
+  
   if (!seed) {
     throw new Error('Wallet seed is unavailable.');
   }
+
   const data = {
     version: 2,
     address: wallet.address,
     seed: seed,
-    publicKey: wallet.publicKey,
+    publicKey: wallet.publicKey || wallet.classicAddress,
     createdAt: new Date().toISOString()
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
