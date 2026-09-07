@@ -1,30 +1,25 @@
-// Unlocked version: uses localStorage instead of biometric/secure storage lock
 const STORAGE_KEY = 'adrenaline.wallet.v2';
 
-function readStoredWallet() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
 export async function initializeSecureStorage() {
-  return readStoredWallet() !== null;
+  return true;
 }
 
 export async function hasStoredWallet() {
-  return readStoredWallet() !== null;
+  return localStorage.getItem(STORAGE_KEY) !== null;
 }
 
 export async function saveWallet(wallet) {
-  if (!wallet?.seed) throw new Error('Wallet seed is unavailable.');
+  let seed = wallet.seed;
+  if (!seed && typeof wallet.secret === 'function') {
+    seed = wallet.secret();
+  }
+  if (!seed) {
+    throw new Error('Wallet seed is unavailable.');
+  }
   const data = {
     version: 2,
     address: wallet.address,
-    seed: wallet.seed,
+    seed: seed,
     publicKey: wallet.publicKey,
     createdAt: new Date().toISOString()
   };
@@ -32,11 +27,19 @@ export async function saveWallet(wallet) {
 }
 
 export async function unlockWallet() {
-  const stored = readStoredWallet();
-  if (!stored) {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
     throw new Error('No wallet found in storage.');
   }
-  return stored;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed.seed) {
+      throw new Error('Wallet seed is unavailable.');
+    }
+    return parsed;
+  } catch (e) {
+    throw new Error('Wallet data is corrupted.');
+  }
 }
 
 export async function deleteStoredWallet() {
